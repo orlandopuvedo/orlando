@@ -17,8 +17,8 @@ LIST_FIELDS = [
 def get_profile(db: Session) -> UserProfile:
     profile = db.get(UserProfile, 1)
     if profile is None:
-        profile = UserProfile(id=1, salary_currency="USD", salary_period="month", min_salary=2000,
-                              target_salary=2500, target_salary_max=4000, work_arrangements=["remote"],
+        # Salary is never assumed: the user configures it (Settings → Job Hunt / Profile).
+        profile = UserProfile(id=1, salary_currency="USD", salary_period="month", work_arrangements=["remote"],
                               employment_types=["full_time", "contract"])
         for f in LIST_FIELDS:
             if getattr(profile, f) is None:
@@ -27,6 +27,26 @@ def get_profile(db: Session) -> UserProfile:
         db.commit()
         db.refresh(profile)
     return profile
+
+
+PERIOD_ALIASES = {"hourly": "hour", "hour": "hour", "daily": "day", "day": "day", "weekly": "week", "week": "week",
+                  "monthly": "month", "month": "month", "annual": "year", "annually": "year", "yearly": "year", "year": "year"}
+
+
+def salary_bounds_monthly_usd(profile, rates: dict | None = None) -> dict:
+    """User salary constraints normalized to monthly USD via the salary service (None = not configured)."""
+    from app.services.salary import DEFAULT_USD_RATES, to_monthly_usd
+
+    rates = {**DEFAULT_USD_RATES, **(rates or {})}
+    period = PERIOD_ALIASES.get((profile.salary_period or "month").lower(), "month")
+    cur = (profile.salary_currency or "USD").upper()
+
+    def conv(v):
+        return to_monthly_usd(v, cur, period, rates) if v not in (None, "") and float(v) > 0 else None
+
+    return {"min": conv(profile.min_salary), "target": conv(profile.target_salary),
+            "target_max": conv(profile.target_salary_max), "max": conv(getattr(profile, "max_salary", None)),
+            "period": period, "currency": cur}
 
 
 def _parse_ym(value: str | None) -> date | None:

@@ -38,6 +38,9 @@ class JobSource(TimestampMixin, Base):
     config: Mapped[dict] = mapped_column(JSON, default=dict)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
+    last_status: Mapped[str] = mapped_column(String(20), default="never")  # never | ok | empty | error
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_found_count: Mapped[int | None] = mapped_column(Integer)
 
 
 class Job(TimestampMixin, Base):
@@ -89,6 +92,9 @@ class Job(TimestampMixin, Base):
     # Pipeline
     application_status: Mapped[str] = mapped_column(String(30), default="DISCOVERED", index=True)
     in_queue: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    # Hard search filters (applied before qualification): passed | review | rejected
+    filter_status: Mapped[str | None] = mapped_column(String(20), index=True)
+    filter_reasons: Mapped[list] = mapped_column(JSON, default=list)
     notes: Mapped[str | None] = mapped_column(Text)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -139,3 +145,5 @@ class JobSearchRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     stats: Mapped[dict] = mapped_column(JSON, default=dict)
     log: Mapped[list] = mapped_column(JSON, default=list)
+    outcome: Mapped[str | None] = mapped_column(String(40))
+    message: Mapped[str | None] = mapped_column(Text)

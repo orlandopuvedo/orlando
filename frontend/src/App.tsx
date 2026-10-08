@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { api, fmtDateTime } from "./api";
-import { useAction } from "./components/ui";
+import { RunHuntButton } from "./components/HuntRun";
 import Dashboard from "./pages/Dashboard";
 import Jobs from "./pages/Jobs";
 import JobDetail from "./pages/JobDetail";
@@ -87,16 +87,15 @@ function Notifications() {
 }
 
 function TopBar() {
-  const run = useAction();
   const [ai, setAi] = useState<any>(null);
   useEffect(() => { api.get("/settings/ai-status").then(setAi).catch(() => {}); }, []);
   return (
     <div className="topbar">
       <div className="small muted">
-        {ai && (ai.available ? <>AI: <b className="secondary">{ai.active}</b> · {ai.model}</> : <>AI: templates only (add an API key in .env)</>)}
+        {ai && (ai.available ? <>AI: <b className="secondary">{ai.active}</b> · {ai.model}{ai.last?.last_error && <span style={{ color: "var(--critical)" }}> · last error: {ai.last.last_error}</span>}</> : <>AI: templates only (add an API key in .env)</>)}
       </div>
       <div className="row">
-        <button onClick={() => run(() => api.post("/automation/run"), "Job hunt started — new jobs will appear shortly")}>▶ Run job hunt</button>
+        <RunHuntButton />
         <Notifications />
       </div>
     </div>

@@ -21,7 +21,7 @@ TWOFA = '<html><body><p>Enter the code we sent to your phone</p><input autocompl
 
 
 class FakeAgent(BrowserAgent):
-    def __init__(self, html: str, after_submit: str = "<html><body>Thanks!</body></html>"):
+    def __init__(self, html: str, after_submit: str = "<html><body><h1>Thank you for applying!</h1><p>Your application has been submitted.</p></body></html>"):
         self.html, self.after, self.actions, self.closed = html, after_submit, [], False
 
     def open_page(self, url):
@@ -63,7 +63,7 @@ def test_detectors():
     assert labels[:3] == ["First name", "Last name", "Email"]
     assert any(f["type"] == "file" for f in fields)
     assert next(f for f in fields if f["name"] == "gender")["options"][-1] == "Decline to self-identify"
-    assert detectors.find_submit(FORM) == "button"
+    assert detectors.find_submit(FORM) == 'button:has-text("Submit application")'
 
 
 def _app(client, db, mode="supervised", apply_url="https://boards.greenhouse.io/acme/jobs/1"):
@@ -113,8 +113,8 @@ def test_supervised_full_flow_with_approvals(client, db):
     db.commit()
     assert res.status == "awaiting_approval"
     typed = {a[1]: a[2] for a in agent.actions if a[0] == "type"}
-    assert typed["#fn"] == "Ana" and typed["#ln"] == "Rivera" and typed["#em"] == "ana@example.com"
-    assert ("upload", "#cv", "/tmp/cv.docx") in agent.actions
+    assert typed['[id="fn"]'] == "Ana" and typed['[id="ln"]'] == "Rivera" and typed['[id="em"]'] == "ana@example.com"
+    assert ("upload", '[id="cv"]', "/tmp/cv.docx") in agent.actions
     assert not any(a[0] == "click" for a in agent.actions)
     pending = client.get("/api/approvals").json()
     kinds = {p["kind"] for p in pending}
@@ -124,7 +124,7 @@ def test_supervised_full_flow_with_approvals(client, db):
                                                                  "value": p["proposed_value"] or "Because I love the product."})
     # 2nd run: everything approved except final submission
     db.expire_all()
-    res = run_supervised(db, db.get(Application, app.id), FakeAgent(FORM))
+    res = run_supervised(db, db.get(Application, app.id), FakeAgent(FORM), resume_file="/tmp/cv.docx")
     db.commit()
     assert res.status == "ready_to_submit"
     final = next(p for p in client.get("/api/approvals").json() if p["kind"] == "final_submit")
@@ -132,8 +132,8 @@ def test_supervised_full_flow_with_approvals(client, db):
     # 3rd run: submits
     db.expire_all()
     agent = FakeAgent(FORM)
-    res = run_supervised(db, db.get(Application, app.id), agent)
+    res = run_supervised(db, db.get(Application, app.id), agent, resume_file="/tmp/cv.docx")
     db.commit()
     assert res.status == "submitted"
-    assert ("click", "button") in agent.actions
+    assert ("click", 'button:has-text("Submit application")') in agent.actions
     assert client.get(f"/api/applications/{app.id}").json()["status"] == "APPLIED"

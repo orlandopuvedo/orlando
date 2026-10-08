@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 
-from app.sources.base import JobSourceAdapter, SearchQuery, keyword_match
+from app.sources.base import JobSourceAdapter, SearchQuery, SourceSchemaError, expect, first, keyword_match
 
 
 class RemotiveAdapter(JobSourceAdapter):
@@ -23,9 +23,9 @@ class RemotiveAdapter(JobSourceAdapter):
         r = self.http().get("https://remotive.com/api/remote-jobs", params=params)
         r.raise_for_status()
         out = []
-        for j in r.json().get("jobs", []):
+        for j in expect(r.json(), dict, "jobs", self.name):
             out.append({
-                "title": j.get("title"), "company": j.get("company_name"), "source_url": j.get("url"), "apply_url": j.get("url"),
+                "title": j.get("title"), "company": first(j, "company_name", "company"), "source_url": j.get("url"), "apply_url": j.get("url"),
                 "description": j.get("description"), "location": j.get("candidate_required_location"), "remote_type": "remote",
                 "employment_type": j.get("job_type"), "posted_at": j.get("publication_date"), "job_id_external": j.get("id"),
                 "salary_text": j.get("salary"), "raw": {"category": j.get("category"), "tags": j.get("tags")},
@@ -45,7 +45,7 @@ class RemoteOKAdapter(JobSourceAdapter):
         r = self.http().get("https://remoteok.com/api")
         r.raise_for_status()
         out = []
-        for j in r.json():
+        for j in expect(r.json(), list, None, self.name):
             if not isinstance(j, dict) or "position" not in j:
                 continue  # first element is the legal notice
             raw = {"title": j.get("position"), "company": j.get("company"), "source_url": j.get("url"),
@@ -75,18 +75,31 @@ class HimalayasAdapter(JobSourceAdapter):
         while len(out) < q.limit and offset < 300:
             r = self.http().get("https://himalayas.app/jobs/api", params={"limit": 20, "offset": offset})
             r.raise_for_status()
-            jobs = r.json().get("jobs", [])
+            jobs = expect(r.json(), dict, "jobs", self.name)
             if not jobs:
                 break
             for j in jobs:
-                raw = {"title": j.get("title"), "company": j.get("companyName"), "source_url": j.get("applicationLink") or j.get("guid"),
-                       "apply_url": j.get("applicationLink"), "description": j.get("description") or j.get("excerpt"),
-                       "location": ", ".join(j.get("locationRestrictions") or []) or "Remote", "remote_type": "remote",
-                       "employment_type": j.get("employmentType"), "posted_at": j.get("pubDate"), "job_id_external": j.get("guid"),
-                       "salary_min": j.get("minSalary"), "salary_max": j.get("maxSalary"), "salary_currency": j.get("currency") or ("USD" if j.get("minSalary") else None),
-                       "salary_period": "year" if j.get("minSalary") else None, "seniority": None,
-                       "category": None, "tags": " ".join(j.get("categories") or []),
-                       "raw": {"categories": j.get("categories"), "seniority": j.get("seniority"), "timezones": j.get("timezoneRestrictions")}}
+                company = first(j, "companyName", "company_name", "company.name")
+                if isinstance(company, dict):
+                    company = company.get("name")
+                period = str(first(j, "salaryPeriod", "salary_period", default="") or "").lower()
+                period = {"annual": "year", "yearly": "year", "year": "year", "monthly": "month", "month": "month",
+                          "hourly": "hour", "hour": "hour"}.get(period)
+                smin = first(j, "minSalary", "min_salary", "salaryMin")
+                link = first(j, "applicationLink", "applyUrl", "application_url", "url", "guid")
+                raw = {"title": j.get("title"), "company": company, "source_url": link, "apply_url": link,
+                       "description": first(j, "description", "excerpt"),
+                       "location": ", ".join(first(j, "locationRestrictions", "location_restrictions", default=[]) or []) or "Remote",
+                       "remote_type": "remote", "employment_type": first(j, "employmentType", "employment_type"),
+                       "posted_at": first(j, "pubDate", "publishedAt", "published_at"),
+                       "job_id_external": first(j, "guid", "id", "job_id", "applicationLink"),
+                       "salary_min": smin, "salary_max": first(j, "maxSalary", "max_salary", "salaryMax"),
+                       "salary_currency": first(j, "currency", "salaryCurrency") or ("USD" if smin else None),
+                       "salary_period": period or ("year" if smin else None),
+                       "tags": " ".join(first(j, "categories", default=[]) or []),
+                       "raw": {"categories": j.get("categories"), "seniority": j.get("seniority")}}
+                if not raw["title"]:
+                    raise SourceSchemaError(f"{self.name}: listing without a title — the API format may have changed")
                 if keyword_match(raw, q.query):
                     out.append(raw)
             offset += 20
@@ -118,7 +131,10 @@ class WeWorkRemotelyAdapter(JobSourceAdapter):
 
 
 def parse_wwr_rss(xml_text: str) -> list[dict]:
-    root = ET.fromstring(xml_text)
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+        raise SourceSchemaError(f"We Work Remotely: feed is not valid RSS/XML ({e})") from e
     out = []
     for item in root.iter("item"):
         title_raw = (item.findtext("title") or "").strip()
@@ -146,7 +162,7 @@ class GreenhouseAdapter(JobSourceAdapter):
             if r.status_code == 404:
                 continue
             r.raise_for_status()
-            for j in r.json().get("jobs", []):
+            for j in expect(r.json(), dict, "jobs", self.name):
                 out.append(self._map(j, token))
         return [j for j in out if keyword_match(j, q.query)][: q.limit]
 
@@ -179,7 +195,7 @@ class LeverAdapter(JobSourceAdapter):
             if r.status_code == 404:
                 continue
             r.raise_for_status()
-            for j in r.json():
+            for j in expect(r.json(), list, None, self.name):
                 out.append(self._map(j, site))
         return [j for j in out if keyword_match(j, q.query)][: q.limit]
 
@@ -212,11 +228,14 @@ class AshbyAdapter(JobSourceAdapter):
             if r.status_code == 404:
                 continue
             r.raise_for_status()
-            for j in r.json().get("jobs", []):
+            for j in expect(r.json(), dict, "jobs", self.name):
+                wt = str(j.get("workplaceType") or "").lower()
+                remote = "remote" if (j.get("isRemote") or wt == "remote") else {"hybrid": "hybrid", "onsite": "onsite", "on-site": "onsite"}.get(wt)
                 out.append({"title": j.get("title"), "company": board.replace("-", " ").title(), "source_url": j.get("jobUrl"),
                             "apply_url": j.get("applyUrl") or j.get("jobUrl"), "description": j.get("descriptionPlain") or j.get("descriptionHtml"),
                             "location": j.get("location"), "employment_type": j.get("employmentType"),
-                            "remote_type": "remote" if j.get("isRemote") else None, "posted_at": j.get("publishedAt"),
+                            "remote_type": remote, "posted_at": j.get("publishedAt"),
                             "job_id_external": f"{board}:{j.get('id')}",
-                            "salary_text": ((j.get("compensation") or {}).get("compensationTierSummary") or "")})
+                            "salary_text": first(j, "compensation.compensationTierSummary",
+                                                 "compensation.scrapeableCompensationSalarySummary", "compensationTierSummary", default="")})
         return [j for j in out if keyword_match(j, q.query)][: q.limit]

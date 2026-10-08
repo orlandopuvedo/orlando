@@ -34,8 +34,8 @@ export default function Dashboard() {
             </div>
             <div style={{ textAlign: "right" }}>
               <div className="secondary small">Monthly target</div>
-              <div style={{ fontSize: 24, fontWeight: 650 }}>{money(d.salary.monthly_target)}+</div>
-              <div className="small muted">priority range {money(d.salary.target_range[0])}–{money(d.salary.target_range[1])}+</div>
+              <div style={{ fontSize: 24, fontWeight: 650 }}>{d.salary.monthly_target != null ? `${money(d.salary.monthly_target)}+` : <Link to="/settings">Set it →</Link>}</div>
+              {d.salary.target_range[0] != null && <div className="small muted">target {money(d.salary.target_range[0])}{d.salary.target_range[1] ? `–${money(d.salary.target_range[1])}` : "+"} /mo</div>}
             </div>
           </div>
           <div style={{ margin: "14px 0 6px" }}><ProgressBar percent={p.percent} /></div>

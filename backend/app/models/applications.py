@@ -29,6 +29,14 @@ class Application(TimestampMixin, Base):
     applied_via: Mapped[str | None] = mapped_column(String(300))
     response_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     offer_amount_monthly_usd: Mapped[float | None] = mapped_column()
+    # Submission metadata (set by the supervised agent or manual verification)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    submission_status: Mapped[str | None] = mapped_column(String(20))  # confirmed | unconfirmed | manual
+    confirmation_text: Mapped[str | None] = mapped_column(Text)
+    confirmation_id: Mapped[str | None] = mapped_column(String(200))
+    final_url: Mapped[str | None] = mapped_column(String(1000))
+    ats: Mapped[str | None] = mapped_column(String(40))
+    submission_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
     notes: Mapped[str | None] = mapped_column(Text)
 
     job: Mapped[Job] = relationship()
@@ -78,6 +86,30 @@ class ApprovalRequest(TimestampMixin, Base):
     message: Mapped[str | None] = mapped_column(Text)
     field_key: Mapped[str | None] = mapped_column(String(200))
     proposed_value: Mapped[str | None] = mapped_column(Text)
+    options: Mapped[list] = mapped_column(JSON, default=list)  # allowed choices (radio/select/checkbox)
     final_value: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="PENDING", index=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AgentRun(Base):
+    """One execution of the supervised application agent (observability log)."""
+
+    __tablename__ = "agent_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    application_id: Mapped[int | None] = mapped_column(ForeignKey("applications.id", ondelete="CASCADE"), index=True)
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ats: Mapped[str | None] = mapped_column(String(40))
+    mode: Mapped[str | None] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(30), default="running")
+    current_step: Mapped[int] = mapped_column(default=0)
+    fields_filled: Mapped[int] = mapped_column(default=0)
+    approvals_requested: Mapped[int] = mapped_column(default=0)
+    blocked_reason: Mapped[str | None] = mapped_column(Text)
+    submission_attempted: Mapped[bool] = mapped_column(default=False)
+    confirmation: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    events: Mapped[list] = mapped_column(JSON, default=list)

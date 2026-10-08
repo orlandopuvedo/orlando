@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.ai import get_provider
 from app.api.deps import DB, get_or_404, to_dict
 from app.api.jobs import job_summary
-from app.models import Application, ApprovalRequest, Contact, GeneratedDocument, Job, ResumeVersion, Video, utcnow
+from app.models import AgentRun, Application, ApprovalRequest, Contact, GeneratedDocument, Job, ResumeVersion, Video, utcnow
 from app.services import generation as gen
 from app.services.application_engine import build_package, resolve_approval
 from app.services.guardrails import check_fabrication
@@ -36,6 +36,12 @@ def app_detail(db: Session, a: Application) -> dict:
                                                      .order_by(ApprovalRequest.created_at.desc()))]
     d["contact"] = to_dict(db.get(Contact, a.contact_id)) if a.contact_id else None
     d["video"] = to_dict(db.get(Video, a.video_id)) if a.video_id else None
+    last = db.scalars(select(AgentRun).where(AgentRun.application_id == a.id).order_by(AgentRun.started_at.desc()).limit(1)).first()
+    d["last_agent_run"] = to_dict(last) if last else None
+    from app.browser.supervisor import automation_permission
+
+    ok, info = automation_permission(db, a)
+    d["agent_allowed"], d["agent_permission"] = ok, info
     return d
 
 
@@ -135,7 +141,9 @@ def regenerate(aid: int, data: dict[str, Any], db: Session = DB):
 @router.post("/applications/{aid}/agent-run")
 def agent_run(aid: int, db: Session = DB):
     """Supervised browser agent. Requires Playwright; stops on CAPTCHA/login/2FA and before final submission."""
-    from app.browser.supervisor import automation_permission, export_resume_for_upload, run_supervised
+    from app.browser.supervisor import (
+        automation_permission, export_cover_letter_for_upload, export_resume_for_upload, run_supervised,
+    )
 
     a = get_or_404(db, Application, aid)
     ok, info = automation_permission(db, a)
@@ -149,10 +157,27 @@ def agent_run(aid: int, db: Session = DB):
         return {"status": "error", "message": str(e)}
     except Exception as e:  # browser failed to launch (no display etc.)
         return {"status": "error", "message": f"Could not start browser: {e}"}
-    cover = db.get(GeneratedDocument, a.cover_letter_id).content if a.cover_letter_id and db.get(GeneratedDocument, a.cover_letter_id) else None
-    result = run_supervised(db, a, agent, export_resume_for_upload(db, a), cover)
+    cover_doc = db.get(GeneratedDocument, a.cover_letter_id) if a.cover_letter_id else None
+    result = run_supervised(db, a, agent, export_resume_for_upload(db, a), cover_doc.content if cover_doc else None,
+                            export_cover_letter_for_upload(db, a))
     db.commit()
     return result.as_dict()
+
+
+@router.get("/applications/{aid}/agent-runs")
+def agent_runs(aid: int, db: Session = DB):
+    return [to_dict(r) for r in db.scalars(select(AgentRun).where(AgentRun.application_id == aid).order_by(AgentRun.started_at.desc()))]
+
+
+@router.get("/agent-runs")
+def recent_agent_runs(limit: int = 30, db: Session = DB):
+    out = []
+    for r in db.scalars(select(AgentRun).order_by(AgentRun.started_at.desc()).limit(limit)):
+        d = to_dict(r, exclude={"events"})
+        job = db.get(Job, r.job_id) if r.job_id else None
+        d["job"] = {"id": job.id, "title": job.title, "company": job.company} if job else None
+        out.append(d)
+    return out
 
 
 # ---------------------------------------------------------------- generated documents

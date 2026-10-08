@@ -18,6 +18,37 @@ class SourceNotSupported(RuntimeError):
     """Raised when a source has no permitted automated access (manual import only)."""
 
 
+class SourceRateLimited(SourceNotSupported):
+    """The source's terms ask for fewer requests; this search was skipped (not a failure)."""
+
+
+class SourceSchemaError(RuntimeError):
+    """The source answered, but not in the documented format (API changed?). Surfaced as source health."""
+
+
+def first(d: dict, *keys, default=None):
+    """First non-empty value among alternative field names (APIs rename fields over time)."""
+    for k in keys:
+        cur = d
+        for part in k.split("."):
+            cur = cur.get(part) if isinstance(cur, dict) else None
+        if cur not in (None, "", [], {}):
+            return cur
+    return default
+
+
+def expect(data, kind: type, key: str | None, source: str):
+    """Validate the top-level response shape; return the job list."""
+    if key is None:
+        if not isinstance(data, kind):
+            raise SourceSchemaError(f"{source}: expected a JSON {kind.__name__}, got {type(data).__name__}")
+        return data
+    if not isinstance(data, dict) or not isinstance(data.get(key), list):
+        found = list(data.keys())[:8] if isinstance(data, dict) else type(data).__name__
+        raise SourceSchemaError(f"{source}: response has no '{key}' list (got {found}) — the API format may have changed")
+    return data[key]
+
+
 @dataclass
 class SearchQuery:
     query: str = ""
@@ -54,7 +85,9 @@ class JobSourceAdapter(ABC):
             return
         last = JobSourceAdapter._last_call.get(self.key)
         if last and time.time() - last < self.min_interval_minutes * 60:
-            raise SourceNotSupported(f"{self.name}: rate limit — wait {self.min_interval_minutes} min between searches (source terms).")
+            wait = int(self.min_interval_minutes - (time.time() - last) / 60) + 1
+            raise SourceRateLimited(f"{self.name}: checked recently — its terms ask for at most one search every "
+                                    f"{self.min_interval_minutes} min (next in ~{wait} min).")
         JobSourceAdapter._last_call[self.key] = time.time()
 
     @abstractmethod

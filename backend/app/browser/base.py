@@ -19,6 +19,13 @@ class FormField:
 
 
 @dataclass
+class FrameInfo:
+    id: str            # implementation-specific frame handle id
+    url: str
+    accessible: bool = True
+
+
+@dataclass
 class PageInspection:
     url: str
     title: str
@@ -39,7 +46,11 @@ class HumanInterventionRequired(RuntimeError):
 
 
 class BrowserAgent(ABC):
-    """Abstract browser automation interface."""
+    """Abstract browser automation interface.
+
+    `frame=None` always means the top-level document. Frame-aware methods have safe defaults so that
+    simple implementations (and test fakes) only need the core verbs.
+    """
 
     @abstractmethod
     def open_page(self, url: str) -> None: ...
@@ -67,6 +78,40 @@ class BrowserAgent(ABC):
 
     @abstractmethod
     def close(self) -> None: ...
+
+    # ---- frame-aware verbs (default: top document only)
+    def list_frames(self) -> list[FrameInfo]:
+        return []
+
+    def frame_html(self, frame_id: str) -> str:
+        raise HumanInterventionRequired("This browser agent cannot read embedded frames.")
+
+    def act(self, verb: str, selector: str, value: str | None = None, frame: str | None = None) -> None:
+        """Dispatch an action to the top document or a frame."""
+        if frame is not None:
+            self.frame_act(frame, verb, selector, value)
+            return
+        if verb == "type":
+            self.type(selector, value or "")
+        elif verb == "select":
+            self.select(selector, value or "")
+        elif verb == "check":
+            self.check(selector)
+        elif verb == "upload":
+            self.upload_file(selector, value or "")
+        elif verb == "click":
+            self.click(selector)
+        else:
+            raise ValueError(f"Unknown verb {verb}")
+
+    def frame_act(self, frame_id: str, verb: str, selector: str, value: str | None = None) -> None:
+        raise HumanInterventionRequired("This browser agent cannot act inside embedded frames.")
+
+    def check(self, selector: str) -> None:
+        self.click(selector)
+
+    def wait_for_settle(self) -> None:
+        """Wait for navigation / re-render after an action."""
 
     # ---- shared, implementation-independent logic
     def extract_text(self) -> str:
@@ -100,11 +145,9 @@ class BrowserAgent(ABC):
     def request_human_approval(self, reason: str, kind: str = "blocked") -> None:
         raise HumanInterventionRequired(reason, kind)
 
-    def submit(self, selector: str | None, approved: bool) -> None:
+    def submit(self, selector: str | None, approved: bool, frame: str | None = None) -> None:
         if not approved:
             raise HumanInterventionRequired("Final submission requires your approval.", "final_submit")
         if not selector:
             raise HumanInterventionRequired("Could not find the submit button — please submit manually.")
-        if self.detect_captcha():
-            raise HumanInterventionRequired("CAPTCHA present at submission — please complete it yourself.")
-        self.click(selector)
+        self.act("click", selector, frame=frame)

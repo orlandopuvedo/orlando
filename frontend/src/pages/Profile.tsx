@@ -106,7 +106,7 @@ export default function Profile() {
   const save = async () => {
     const body = { ...p };
     for (const k of ["id", "created_at", "updated_at", "completeness", "total_experience_years"]) delete body[k];
-    for (const k of ["min_salary", "target_salary", "target_salary_max"]) body[k] = body[k] === "" || body[k] == null ? null : Number(body[k]);
+    for (const k of ["min_salary", "target_salary", "target_salary_max", "max_salary"]) body[k] = body[k] === "" || body[k] == null ? null : Number(body[k]);
     body.work_experience = (body.work_experience || []).map((e: any) => ({ ...e, highlights: (e.highlights || []).filter((h: string) => h.trim()) }));
     if (await act(() => api.put("/profile", body), "Profile saved — jobs re-scored")) reload();
   };
@@ -187,6 +187,7 @@ export default function Profile() {
             <Field label="Minimum salary"><input type="number" value={p.min_salary ?? ""} onChange={(e) => set("min_salary", e.target.value)} /></Field>
             <Field label="Target salary (from)"><input type="number" value={p.target_salary ?? ""} onChange={(e) => set("target_salary", e.target.value)} /></Field>
             <Field label="Target salary (stretch / to)"><input type="number" value={p.target_salary_max ?? ""} onChange={(e) => set("target_salary_max", e.target.value)} /></Field>
+            <Field label="Maximum salary (hard limit, blank = no limit)"><input type="number" value={p.max_salary ?? ""} onChange={(e) => set("max_salary", e.target.value)} /></Field>
             <Field label="Salary currency / period">
               <div className="row" style={{ flexWrap: "nowrap" }}>
                 <input value={p.salary_currency || "USD"} onChange={(e) => set("salary_currency", e.target.value)} style={{ width: 90 }} />

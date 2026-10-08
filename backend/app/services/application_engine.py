@@ -88,16 +88,20 @@ def needs_cover_letter(job: Job, policy: str) -> bool:
     return bool(req.get("cover_letter") or req.get("cover_letter_required"))
 
 
-def _approval(db: Session, app: Application, kind: str, title: str, message: str, field_key: str, proposed: str | None) -> ApprovalRequest:
+def _approval(db: Session, app: Application, kind: str, title: str, message: str, field_key: str, proposed: str | None,
+              options: list[str] | None = None) -> ApprovalRequest:
     existing = db.scalar(select(ApprovalRequest).where(ApprovalRequest.application_id == app.id, ApprovalRequest.field_key == field_key,
                                                        ApprovalRequest.status == "PENDING"))
     if existing:
         existing.proposed_value = proposed
         existing.message = message
+        if options is not None:
+            existing.options = options
         return existing
     ap = ApprovalRequest(application_id=app.id, job_id=app.job_id, kind=kind, title=title, message=message,
-                         field_key=field_key, proposed_value=proposed)
+                         field_key=field_key, proposed_value=proposed, options=options or [])
     db.add(ap)
+    db.flush()
     return ap
 
 
@@ -116,6 +120,7 @@ def build_package(db: Session, job: Job, *, mode: str | None = None, regenerate:
     profile = get_profile(db)
     provider = get_provider(settings.get("ai_provider"), settings.get("ai_model") or None)
     parts = regenerate or {"resume", "cover_letter", "recruiter_message", "answers", "video"}
+    pkg_started = utcnow().isoformat()
     app = ensure_application(db, job, mode or settings.get("application_mode"))
     if mode:
         app.mode = mode
@@ -233,17 +238,23 @@ def build_package(db: Session, job: Job, *, mode: str | None = None, regenerate:
     # --- limits & checklist
     max_per_company = settings.get("max_applications_per_company", 2)
     n_company = company_application_count(db, job)
+    if job.filter_status == "rejected":
+        warnings.append("This job does NOT meet your search filters: " + " ".join(job.filter_reasons or []))
     if n_company >= max_per_company:
         warnings.append(f"You already applied to {n_company} role(s) at {job.company}; limit is {max_per_company}.")
     pkg["requirements"] = {k: v for k, v in req.items() if k != "screening_questions"}
     pkg["checklist"] = _checklist(job, pkg)
     pkg["warnings"] = warnings
     pkg["generated_at"] = utcnow().isoformat()
-    pkg["generated_with"] = provider.label if provider.is_available() else "templates (no AI provider configured)"
+    from app.ai.registry import AI_STATUS
+
+    ai_failed = provider.is_available() and AI_STATUS.get("last_error_at") and AI_STATUS["last_error_at"] >= pkg_started
+    pkg["generated_with"] = (f"templates — AI provider {provider.label} FAILED: {AI_STATUS.get('last_error')}" if ai_failed
+                             else provider.label if provider.is_available() else "templates (no AI provider configured)")
     app.package = pkg
     if job.application_status in {"DISCOVERED", "QUALIFIED", "SKIPPED"}:
         transition_job(db, job, "READY", "Application package prepared", force=job.application_status == "SKIPPED")
-    job.in_queue = True
+    job.in_queue = job.filter_status != "rejected"
     pending = db.scalar(select(func.count()).select_from(ApprovalRequest).where(ApprovalRequest.application_id == app.id, ApprovalRequest.status == "PENDING"))
     if pending:
         notify(db, "approval_required", f"{pending} approval(s) needed: {job.title}", job.company, link="/approvals",
@@ -269,10 +280,16 @@ def resolve_approval(db: Session, approval: ApprovalRequest, action: str, value:
     action = action.lower()
     if action not in {"approve", "edit", "skip"}:
         raise ValueError("action must be approve, edit or skip")
+    if action == "edit" and approval.options and value not in approval.options:
+        raise ValueError(f"Choose one of: {', '.join(approval.options)}")
     approval.status = {"approve": "APPROVED", "edit": "EDITED", "skip": "SKIPPED"}[action]
     approval.final_value = value if action == "edit" else (approval.proposed_value if action == "approve" else None)
     approval.resolved_at = utcnow()
     app = db.get(Application, approval.application_id) if approval.application_id else None
+    if app and approval.kind == "verify_submission":
+        _resolve_submission_verification(db, app, approval)
+        db.flush()
+        return approval
     if app and approval.field_key and action != "skip":
         pkg = dict(app.package or {})
         key = approval.field_key
@@ -290,6 +307,25 @@ def resolve_approval(db: Session, approval: ApprovalRequest, action: str, value:
             pkg["video"] = v
         elif key == "final_submit":
             pkg["submit_approved"] = True
+            pkg["submit_approved_at"] = utcnow().isoformat()
         app.package = pkg
     db.flush()
     return approval
+
+
+VERIFY_YES = "Yes — I checked: the application WAS submitted"
+VERIFY_NO = "No — it was NOT submitted"
+
+
+def _resolve_submission_verification(db: Session, app: Application, approval: ApprovalRequest) -> None:
+    """Manual verification of an unconfirmed submission. Only an explicit YES marks the application APPLIED."""
+    from app.services.pipeline import transition_job
+
+    yes = approval.status in ("APPROVED", "EDITED") and (approval.final_value or "") == VERIFY_YES
+    if yes:
+        app.submission_status = "manual_confirmed"
+        if app.job.application_status != "APPLIED":
+            transition_job(db, app.job, "APPLIED", "Submission verified manually by the user")
+    elif approval.status != "PENDING" and app.job.application_status == "SUBMITTED_UNCONFIRMED":
+        app.submission_status = "not_submitted"
+        transition_job(db, app.job, "READY", "User reported the submission did not go through")

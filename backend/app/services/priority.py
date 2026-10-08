@@ -41,9 +41,12 @@ def priority_score(
     comps: dict[str, float] = {}
     comps["match"] = job.match_score or 0
 
-    target = profile.target_salary or 2500
+    from app.services.profile_service import salary_bounds_monthly_usd
+
+    b = salary_bounds_monthly_usd(profile, settings.get("usd_rates") or {})
+    target = b["target"] or b["min"]
     top = job.salary_monthly_usd_max or job.salary_monthly_usd_min
-    if top is None:
+    if top is None or target is None:
         comps["salary"] = 50
     else:
         comps["salary"] = max(0, min(100, 100 * top / max(target * 1.4, 1)))

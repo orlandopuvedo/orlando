@@ -108,7 +108,7 @@ def test_rejection_counts_as_response_and_cancels_followups(client):
 def test_pipeline_board(client):
     _setup(client)
     board = client.get("/api/pipeline").json()
-    assert [c["status"] for c in board["columns"]] == ["DISCOVERED", "QUALIFIED", "READY", "APPLYING", "APPLIED", "FOLLOW_UP", "INTERVIEW", "OFFER", "REJECTED"]
+    assert [c["status"] for c in board["columns"]] == ["DISCOVERED", "QUALIFIED", "READY", "APPLYING", "SUBMITTED_UNCONFIRMED", "APPLIED", "FOLLOW_UP", "INTERVIEW", "OFFER", "REJECTED"]
     assert board["columns"][1]["count"] == 1
 
 

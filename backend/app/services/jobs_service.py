@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Application, Company, Contact, Job, JobSourceRef, ResumeVersion, Video, utcnow
 from app.services.dedupe import find_duplicate
+from app.services.filters import evaluate_hard_filters
 from app.services.normalization import NormalizedJob, normalize_job
 from app.services.notifications import notify
 from app.services.priority import priority_score
@@ -126,6 +127,10 @@ def rescore_job(db: Session, job: Job, settings: dict | None = None, profile=Non
     profile = profile or get_profile(db)
     videos = videos if videos is not None else db.scalars(select(Video).where(Video.is_active.is_(True))).all()
     previous = job.match_score
+    # Hard filters first: a high score can never override a user requirement.
+    fr = evaluate_hard_filters(job, profile, settings)
+    job.filter_status = fr.status
+    job.filter_reasons = fr.as_list()
     result = score_job(job, profile, settings, videos)
     job.match_score = result.score
     job.classification = result.classification
@@ -145,18 +150,22 @@ def rescore_job(db: Session, job: Job, settings: dict | None = None, profile=Non
 
     if job.application_status in {"DISCOVERED", "QUALIFIED", "SKIPPED"}:
         min_score = settings.get("min_match_score", 60)
-        if result.score >= min_score:
+        if result.score >= min_score and fr.status != "rejected":
             if job.application_status == "DISCOVERED":
                 job.application_status = "QUALIFIED"
         elif job.application_status == "QUALIFIED":
             job.application_status = "DISCOVERED"
-        job.in_queue = result.score >= settings.get("queue_min_score", 70) and job.application_status == "QUALIFIED" and not job.archived
+        # Only jobs that PASS every hard filter enter the queue automatically ("review" waits for the user).
+        job.in_queue = (fr.status == "passed" and result.score >= settings.get("queue_min_score", 70)
+                        and job.application_status == "QUALIFIED" and not job.archived)
+    elif fr.status == "rejected" and job.application_status == "READY":
+        job.in_queue = False
 
-    if notify_high and previous is None and result.score >= settings.get("notify_min_match_score", 85):
+    if notify_high and previous is None and fr.status == "passed" and result.score >= settings.get("notify_min_match_score", 85):
         notify(db, "high_match_job", f"New {result.classification} match: {job.title}",
                f"{job.company or 'Unknown company'} · score {result.score:.0f}", link=f"/jobs/{job.id}",
                entity_type="job", entity_id=job.id, dedupe_key=f"high_match:{job.id}")
-    if notify_high and previous is None and job.video_required and result.score >= settings.get("min_match_score", 60):
+    if notify_high and previous is None and fr.status == "passed" and job.video_required and result.score >= settings.get("min_match_score", 60):
         notify(db, "video_required", f"Video required: {job.title}", f"{job.company or ''} asks for a video.",
                link=f"/jobs/{job.id}", entity_type="job", entity_id=job.id, dedupe_key=f"video_required:{job.id}")
     db.flush()
@@ -179,7 +188,8 @@ def apply_queue(db: Session, limit: int = 100) -> list[Job]:
     return list(
         db.scalars(
             select(Job)
-            .where(Job.in_queue.is_(True), Job.archived.is_(False), Job.application_status.in_(["QUALIFIED", "READY"]))
+            .where(Job.in_queue.is_(True), Job.archived.is_(False), Job.application_status.in_(["QUALIFIED", "READY"]),
+                   Job.filter_status != "rejected")
             .order_by(Job.priority_score.desc().nullslast(), Job.match_score.desc().nullslast())
             .limit(limit)
         ).all()

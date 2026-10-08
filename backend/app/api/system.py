@@ -73,11 +73,19 @@ def put_settings(data: dict[str, Any], db: Session = DB):
     if "application_mode" in data and data["application_mode"] not in ("copilot", "supervised", "auto"):
         raise HTTPException(422, "application_mode must be copilot, supervised or auto")
     rescore = any(k in data for k in ("score_weights", "priority_weights", "min_match_score", "queue_min_score",
-                                      "excluded_categories", "preferred_categories"))
+                                      "excluded_categories", "preferred_categories", "job_search", "usd_rates"))
     s = update_settings(db, data)
     if rescore:
         rescore_all(db)
     return {"settings": s, "ai": provider_status(s.get("ai_provider"), s.get("ai_model") or None)}
+
+
+@router.post("/settings/ai-test")
+def ai_test(db: Session = DB):
+    s = get_all_settings(db)
+    from app.ai.registry import test_provider
+
+    return test_provider(s.get("ai_provider"), s.get("ai_model") or None)
 
 
 @router.get("/settings/ai-status")
@@ -126,6 +134,34 @@ def search_source(key: str, data: dict[str, Any], db: Session = DB):
     return {"found": len(raws), "created": created, "duplicates": dup}
 
 
+@router.post("/sources/{key}/test")
+def test_source(key: str, db: Session = DB):
+    """Live health check: one small request, parsed and normalized, nothing stored."""
+    from app.services.job_hunt import update_source_health
+
+    adapter = get_adapter(key)
+    if not adapter:
+        raise HTTPException(404, "Unknown source")
+    src = db.scalar(select(JobSource).where(JobSource.key == key))
+    settings = get_all_settings(db)
+    cfg = {"boards": (settings.get("company_boards") or {}).get(key, [])} if key in ("greenhouse", "lever", "ashby") else {}
+    if key in ("greenhouse", "lever", "ashby") and not cfg["boards"]:
+        return {"ok": False, "error": "No company boards configured for this source."}
+    try:
+        raws = adapter.search_jobs(SearchQuery(query="", limit=5, config=cfg))
+        samples = [adapter.normalize_job(r, _rates(settings)) for r in raws[:5]]
+    except SourceNotSupported as e:
+        return {"ok": False, "error": str(e)}
+    except Exception as e:
+        update_source_health(src, ok=False, error=f"{type(e).__name__}: {e}")
+        db.commit()
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    update_source_health(src, ok=True, found=len(raws))
+    db.commit()
+    return {"ok": True, "count": len(raws), "samples": [{"title": n.title, "company": n.company, "salary_monthly_usd_max": n.salary_monthly_usd_max,
+                                                          "remote_type": n.remote_type} for n in samples]}
+
+
 @router.get("/searches")
 def list_searches(db: Session = DB):
     return [to_dict(s) for s in db.scalars(select(JobSearch).order_by(JobSearch.id))]
@@ -157,11 +193,19 @@ def delete_search(sid: int, db: Session = DB):
 
 # ---------------------------------------------------------------- automation
 @router.post("/automation/run")
-def run_cycle(background: BackgroundTasks):
+def run_cycle(background: BackgroundTasks, db: Session = DB):
     if scheduler.running_cycle:
         raise HTTPException(409, "A job-hunt cycle is already running")
-    background.add_task(scheduler.run_now, "manual")
-    return {"started": True}
+    run = JobSearchRun(trigger="manual", status="running", stats={}, log=[])
+    db.add(run)
+    db.commit()
+    background.add_task(scheduler.run_now, "manual", run.id)
+    return {"started": True, "run_id": run.id}
+
+
+@router.get("/automation/runs/{rid}")
+def get_run(rid: int, db: Session = DB):
+    return to_dict(get_or_404(db, JobSearchRun, rid))
 
 
 @router.get("/automation/runs")

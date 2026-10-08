@@ -40,6 +40,7 @@ class UserProfile(TimestampMixin, Base):
     min_salary: Mapped[float | None] = mapped_column(Float)
     target_salary: Mapped[float | None] = mapped_column(Float)
     target_salary_max: Mapped[float | None] = mapped_column(Float)
+    max_salary: Mapped[float | None] = mapped_column(Float)  # hard ceiling; None = no limit
     salary_currency: Mapped[str] = mapped_column(String(10), default="USD")
     salary_period: Mapped[str] = mapped_column(String(20), default="month")
     work_arrangements: Mapped[list] = mapped_column(JSON, default=list)  # remote/hybrid/onsite

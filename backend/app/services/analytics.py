@@ -59,24 +59,29 @@ def _rate(n: int, d: int) -> float:
     return round(n / d, 4) if d else 0.0
 
 
-def salary_bucket(v: float | None) -> str:
+def _k(v: float) -> str:
+    return f"{v / 1000:.1f}".rstrip("0").rstrip(".") + "k"
+
+
+def salary_bucket(v: float | None, edges: list[float] | None = None) -> str:
+    """Bucket by the USER'S configured salary bounds (min / target / stretch), monthly USD."""
     if v is None:
         return "Not listed"
-    if v < 2000:
-        return "< $2k"
-    if v < 2500:
-        return "$2k–2.5k"
-    if v < 4000:
-        return "$2.5k–4k"
-    if v < 6000:
-        return "$4k–6k"
-    return "$6k+"
+    edges = sorted({e for e in (edges or []) if e})
+    if not edges:
+        return "Listed"
+    if v < edges[0]:
+        return f"< ${_k(edges[0])}"
+    for a, b in zip(edges, edges[1:]):
+        if v < b:
+            return f"${_k(a)}–{_k(b)}"
+    return f"${_k(edges[-1])}+"
 
 
-def breakdown(rows: list[dict], key: str, label_map: dict | None = None) -> list[dict]:
+def breakdown(rows: list[dict], key: str, label_map: dict | None = None, edges: list[float] | None = None) -> list[dict]:
     groups: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
-        k = r[key] if key != "salary" else salary_bucket(r["salary"])
+        k = r[key] if key != "salary" else salary_bucket(r["salary"], edges)
         groups[str(k)].append(r)
     out = []
     for k, items in groups.items():
@@ -157,6 +162,13 @@ def recommendations(rows: list[dict], by_category: list[dict], extra: dict | Non
     return recs
 
 
+def _salary_edges(db: Session) -> list[float]:
+    from app.services.profile_service import salary_bounds_monthly_usd
+
+    b = salary_bounds_monthly_usd(get_profile(db), get_all_settings(db).get("usd_rates") or {})
+    return [x for x in (b["min"], b["target"], b["target_max"]) if x]
+
+
 def compute_analytics(db: Session) -> dict:
     rows = _app_facts(db)
     by_cat = breakdown(rows, "category", CATEGORY_LABELS)
@@ -173,7 +185,7 @@ def compute_analytics(db: Session) -> dict:
         "time_series": time_series(rows),
         "breakdowns": {
             "source": breakdown(rows, "source"), "category": by_cat, "company": breakdown(rows, "company")[:20],
-            "salary_range": breakdown(rows, "salary"), "resume_version": breakdown(rows, "resume"),
+            "salary_range": breakdown(rows, "salary", edges=_salary_edges(db)), "resume_version": breakdown(rows, "resume"),
             "application_type": breakdown(rows, "application_type"), "contact_source": breakdown(rows, "contact_source"),
         },
         "recommendations": recommendations(rows, by_cat),
@@ -226,9 +238,10 @@ def compute_dashboard(db: Session) -> dict:
     completeness = profile_completeness(profile)
     by_cat = breakdown(rows, "category", CATEGORY_LABELS)
 
-    min_target = profile.min_salary or 2000
-    if (profile.salary_period or "month") == "year":
-        min_target /= 12
+    from app.services.profile_service import salary_bounds_monthly_usd
+
+    bounds = salary_bounds_monthly_usd(profile, settings.get("usd_rates") or {})
+    min_target = bounds["min"]
     return {
         "metrics": {"jobs_found": jobs_found, "qualified": qualified, "applications": n_apps, "responses": responses,
                     "contacts": contacts, "interviews": max(interviews_apps, interviews_total),
@@ -240,10 +253,10 @@ def compute_dashboard(db: Session) -> dict:
             {"stage": "Final Interviews", "count": max(finals, finals_total)}, {"stage": "Offers", "count": offers},
             {"stage": "Hired", "count": hired},
         ],
-        "salary": {"monthly_target": min_target, "target_range": [profile.target_salary, profile.target_salary_max],
+        "salary": {"monthly_target": min_target, "target_range": [bounds["target"], bounds["target_max"] or bounds["max"]],
                    "current_offer_value": max(offer_values) if offer_values else None,
                    "average_target_salary": round(sum(applied_salaries) / len(applied_salaries)) if applied_salaries else None,
-                   "offer_meets_target": bool(offer_values and max(offer_values) >= min_target)},
+                   "offer_meets_target": bool(offer_values and min_target is not None and max(offer_values) >= min_target)},
         "rates": {"application_success_rate": _rate(responses, n_apps), "interview_rate": _rate(interviews_apps, n_apps),
                   "offer_rate": _rate(offers, n_apps)},
         "progress": {"percent": progress, "stage": stage_label, "today_applications": today_apps,

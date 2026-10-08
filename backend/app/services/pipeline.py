@@ -10,7 +10,8 @@ from app.models import Application, ApplicationStatusHistory, FollowUp, Job, utc
 from app.services.notifications import notify
 from app.services.settings_service import get_setting
 
-PIPELINE = ["DISCOVERED", "QUALIFIED", "READY", "APPLYING", "APPLIED", "FOLLOW_UP", "INTERVIEW", "OFFER", "REJECTED"]
+# SUBMITTED_UNCONFIRMED: the agent clicked submit but could not verify a confirmation → never counted as APPLIED
+PIPELINE = ["DISCOVERED", "QUALIFIED", "READY", "APPLYING", "SUBMITTED_UNCONFIRMED", "APPLIED", "FOLLOW_UP", "INTERVIEW", "OFFER", "REJECTED"]
 EXTRA = ["HIRED", "WITHDRAWN", "SKIPPED"]
 ALL_STATUSES = PIPELINE + EXTRA
 JOB_ONLY = {"DISCOVERED", "QUALIFIED", "SKIPPED"}
@@ -20,7 +21,8 @@ TRANSITIONS: dict[str, set[str]] = {
     "DISCOVERED": {"QUALIFIED", "READY", "APPLYING", "APPLIED", "SKIPPED"},
     "QUALIFIED": {"DISCOVERED", "READY", "APPLYING", "APPLIED", "SKIPPED"},
     "READY": {"QUALIFIED", "APPLYING", "APPLIED", "SKIPPED"},
-    "APPLYING": {"READY", "APPLIED", "SKIPPED"},
+    "APPLYING": {"READY", "APPLIED", "SKIPPED", "SUBMITTED_UNCONFIRMED"},
+    "SUBMITTED_UNCONFIRMED": {"APPLIED", "READY", "SKIPPED", "REJECTED"},
     "APPLIED": {"FOLLOW_UP", "INTERVIEW", "OFFER", "REJECTED", "WITHDRAWN"},
     "FOLLOW_UP": {"APPLIED", "INTERVIEW", "OFFER", "REJECTED", "WITHDRAWN"},
     "INTERVIEW": {"FOLLOW_UP", "OFFER", "REJECTED", "WITHDRAWN"},

@@ -153,7 +153,7 @@ export default function Jobs() {
         <input style={{ flex: 2, minWidth: 180 }} placeholder="Search title, company, description…" value={filters.q} onChange={set("q")} />
         <select style={{ width: 150 }} value={filters.status} onChange={set("status")}>
           <option value="">All statuses</option>
-          {["DISCOVERED", "QUALIFIED", "READY", "APPLYING", "APPLIED", "FOLLOW_UP", "INTERVIEW", "OFFER", "REJECTED", "SKIPPED"].map((s) => <option key={s}>{s}</option>)}
+          {["DISCOVERED", "QUALIFIED", "READY", "APPLYING", "SUBMITTED_UNCONFIRMED", "APPLIED", "FOLLOW_UP", "INTERVIEW", "OFFER", "REJECTED", "SKIPPED"].map((s) => <option key={s}>{s}</option>)}
         </select>
         <select style={{ width: 170 }} value={filters.category} onChange={set("category")}>
           <option value="">All categories</option>
@@ -182,7 +182,9 @@ export default function Jobs() {
                   </td>
                   <td className="num">{j.salary_monthly_usd_max || j.salary_monthly_usd_min ? `${money(j.salary_monthly_usd_min)}–${money(j.salary_monthly_usd_max)}` : <span className="muted">n/a</span>}</td>
                   <td className="small">{j.category_label}</td>
-                  <td><span className="badge">{j.application_status}</span></td>
+                  <td><span className="badge">{j.application_status}</span>
+                    {j.filter_status === "rejected" && <div><span className="badge critical" title={(j.filter_reasons || []).join("\n")}>filtered out</span></div>}
+                    {j.filter_status === "review" && <div><span className="badge warning" title={(j.filter_reasons || []).join("\n")}>review</span></div>}</td>
                   <td className="small muted">{j.sources.join(", ")}</td>
                   <td className="small muted">{fmtDate(j.discovered_at)}</td>
                 </tr>

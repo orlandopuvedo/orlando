@@ -14,6 +14,7 @@ from app.services.profile_service import (
     profile_fact_corpus,
     profile_languages,
     profile_skill_terms,
+    salary_bounds_monthly_usd,
     total_experience_years,
 )
 from app.services.settings_service import DEFAULT_SCORE_WEIGHTS
@@ -67,27 +68,28 @@ def _job_text(job) -> str:
 
 
 # ----------------------------------------------------------------- components
-def score_salary(job, profile) -> tuple[float, list[str], list[str]]:
+def score_salary(job, profile, settings: dict | None = None) -> tuple[float, list[str], list[str]]:
+    """Salary fit vs the user's CONFIGURED bounds (no hardcoded amounts). Hard limits are enforced by filters.py."""
+    b = salary_bounds_monthly_usd(profile, (settings or {}).get("usd_rates") or {})
     lo, hi = job.salary_monthly_usd_min, job.salary_monthly_usd_max
-    minimum = profile.min_salary or 2000
-    target = profile.target_salary or max(minimum, 2500)
-    target_hi = profile.target_salary_max or max(target, 4000)
-    if (profile.salary_period or "month") == "year":
-        minimum, target, target_hi = minimum / 12, target / 12, target_hi / 12
     if lo is None and hi is None:
         return 50, [], ["Salary not listed — confirm compensation early."]
+    minimum, target = b["min"], b["target"] or b["min"]
+    stretch = b["target_max"] or target
+    if minimum is None and target is None:
+        return 60, [], ["Set your salary preferences (Settings → Job Hunt) for salary matching."]
     top = hi or lo
     bottom = lo or hi
+    minimum = minimum if minimum is not None else target
     if top < minimum:
         return 5, [], [f"Pays ~${top:,.0f}/mo, below your ${minimum:,.0f}/mo minimum."]
-    if top >= target_hi:
-        return 100, [f"Top of range ~${top:,.0f}/mo meets your stretch target (${target_hi:,.0f}+)."], []
+    if stretch and top >= stretch and stretch > target:
+        return 100, [f"Top of range ~${top:,.0f}/mo meets your stretch target (${stretch:,.0f}+)."], []
     if top >= target:
-        s = 85 + 15 * (top - target) / max(target_hi - target, 1)
-        return round(s), [f"Salary up to ~${top:,.0f}/mo is within your target range."], []
+        s = 85 + 15 * (top - target) / max(stretch - target, 1) if stretch > target else 95
+        return round(min(100, s)), [f"Salary up to ~${top:,.0f}/mo is within your target range."], []
     s = 55 + 30 * (top - minimum) / max(target - minimum, 1)
-    concerns = [f"Salary (~${bottom:,.0f}-{top:,.0f}/mo) meets the minimum but is below target ${target:,.0f}/mo."]
-    return round(s), [], concerns
+    return round(s), [], [f"Salary (~${bottom:,.0f}-{top:,.0f}/mo) meets the minimum but is below target ${target:,.0f}/mo."]
 
 
 def score_skills(job, profile) -> tuple[float, list[str], list[str], dict]:
@@ -158,6 +160,15 @@ def score_role(job, profile, settings: dict) -> tuple[float, list[str], list[str
         reasons.append(f"Category '{det.CATEGORY_LABELS.get(job.category, job.category)}' is one of your preferred categories.")
     if best_role and best >= 0.5:
         reasons.append(f"Title aligns with your target role '{best_role}'.")
+    text = normalize_text(_job_text(job) + " " + (job.company or ""))
+    opt = [k for k in ((settings.get("job_search") or {}).get("optional_keywords") or []) if k and contains_term(text, k)]
+    if opt:
+        score = min(100, score + 5 * min(3, len(opt)))
+        reasons.append(f"Mentions your keywords: {', '.join(opt[:5])}.")
+    inds = [i for i in (profile.preferred_industries or []) if i and contains_term(text, i)]
+    if inds:
+        score = min(100, score + 10)
+        reasons.append(f"Preferred industry: {', '.join(inds[:3])}.")
     if not profile.preferred_roles and not preferred_cats:
         concerns.append("Set preferred roles/categories in your profile for better role matching.")
         score = max(score, 50)
@@ -316,7 +327,7 @@ def score_job(job, profile, settings: dict | None = None, videos: list | None = 
         reasons.extend(r)
         concerns.extend(c)
 
-    s, r, c = score_salary(job, profile); add("salary", s, r, c)
+    s, r, c = score_salary(job, profile, settings); add("salary", s, r, c)
     s, r, c, d = score_skills(job, profile); add("skills", s, r, c, d)
     s, r, c, d = score_experience(job, profile); add("experience", s, r, c, d)
     s, r, c = score_role(job, profile, settings); add("role_relevance", s, r, c)

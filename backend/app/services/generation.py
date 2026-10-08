@@ -5,6 +5,7 @@ Every output is passed through the fabrication guard and returned with its warni
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from app.ai.base import AIProvider, AIProviderError
@@ -46,19 +47,38 @@ def _job_text(job) -> str:
     return "\n".join(x for x in [job.title, job.company, job.description, job.requirements, job.application_questions] if x) if job else ""
 
 
+_AI_FALLBACK: ContextVar[str | None] = ContextVar("_AI_FALLBACK", default=None)
+
+
 def _finish(text: str, by: str, profile, job, extra_allowed: str = "") -> Generated:
     years = total_experience_years(profile)
     derived = f"{years} {int(years)} {int(years)}+"  # facts computed from the profile's own dates
     warnings = check_fabrication(text, profile_fact_corpus(profile), _job_text(job), f"{extra_allowed} {derived}")
+    failed = _AI_FALLBACK.get()
+    if failed and not by.startswith(("anthropic", "openai", "google", "ollama")):
+        # Never hide an AI failure: the user sees that a template was used and why.
+        by = f"{by} (AI fallback)"
+        warnings = [f"AI provider failed ({failed}) — a deterministic template was used instead."] + warnings
     return Generated(text.strip(), by, warnings)
 
 
 def _ai(provider: AIProvider | None, system: str, prompt: str, max_tokens: int = 1500) -> str | None:
+    from app.ai.registry import record_ai_result
+
+    _AI_FALLBACK.set(None)
     if provider is None or not provider.is_available():
         return None
     try:
-        return provider.complete(system, prompt, max_tokens)
-    except AIProviderError:
+        text = provider.complete(system, prompt, max_tokens)
+        record_ai_result(provider.label, None)
+        return text
+    except AIProviderError as e:
+        record_ai_result(provider.label, str(e))
+        _AI_FALLBACK.set(str(e)[:200])
+        return None
+    except Exception as e:  # unexpected SDK errors are failures too, not silent successes
+        record_ai_result(provider.label, f"{type(e).__name__}: {e}")
+        _AI_FALLBACK.set(f"{type(e).__name__}: {e}"[:200])
         return None
 
 
@@ -257,7 +277,9 @@ def personalize_answer(question: str, base_answer: str | None, profile, job, pro
         if job and job.company:
             text = text.replace("{company}", job.company).replace("{role}", job.title)
         return _finish(text, "answer_library", profile, job, extra_allowed=base_answer)
-    return Generated("", "none", ["No saved answer — please answer manually or add one to the Answer Library."])
+    failed = _AI_FALLBACK.get()
+    return Generated("", "none", ([f"AI provider failed ({failed})."] if failed else [])
+                     + ["No saved answer — please answer manually or add one to the Answer Library."])
 
 
 def tailored_summary(profile, job, provider: AIProvider | None = None) -> Generated:
@@ -270,9 +292,11 @@ def tailored_summary(profile, job, provider: AIProvider | None = None) -> Genera
     if ai:
         return _finish(ai, provider.label, profile, job)
     base = (profile.professional_summary or "").strip()
+    failed = _AI_FALLBACK.get()
+    fb = [f"AI provider failed ({failed}) — summary not tailored."] if failed else []
     if not base:
-        return Generated("", "template", ["Add a professional summary to your profile."])
-    return Generated(base, "template", [])
+        return Generated("", "template", fb + ["Add a professional summary to your profile."])
+    return Generated(base, "template (AI fallback)" if failed else "template", fb)
 
 
 def clean_title(title: str | None) -> str:

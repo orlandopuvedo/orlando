@@ -26,7 +26,8 @@ DEFAULTS: dict[str, Any] = {
     "excluded_categories": [],
     "remote_preference": ["remote"],
     "employment_types": ["full_time", "contract"],
-    "application_mode": "copilot",  # copilot | supervised | auto
+    "application_mode": "supervised",  # copilot | supervised | auto  (submission always needs approval unless auto is explicitly permitted)
+    "agent_max_steps": 8,  # max form pages the supervised agent will advance through
     "daily_application_target": 15,
     "max_applications_per_company": 2,
     "max_applications_per_source_per_day": 40,
@@ -40,7 +41,17 @@ DEFAULTS: dict[str, Any] = {
     "cover_letter_policy": "when_required",  # when_required | when_useful | always | never
     "ai_provider": "auto",
     "ai_model": "",
-    "scheduler": {"enabled": False, "times": ["08:00", "12:00", "18:00"], "auto_package": True},
+    "scheduler": {"enabled": False, "times": ["08:00", "12:00", "18:00"], "auto_package": True,
+                  "timezone": "", "catch_up": True},
+    # Hard search constraints applied BEFORE scoring/queueing (salary lives in the profile; see Settings → Job Hunt)
+    "job_search": {
+        "salary_unknown_policy": "allow",  # allow | review | reject
+        "locations": [],                   # e.g. ["Colombia", "LATAM", "Worldwide"]; empty = no location constraint
+        "seniority": [],                   # allowed levels; empty = any
+        "excluded_companies": [],
+        "required_keywords": [],           # ALL must appear in title/description
+        "optional_keywords": [],           # boost the score when present
+    },
     "score_weights": DEFAULT_SCORE_WEIGHTS,
     "priority_weights": DEFAULT_PRIORITY_WEIGHTS,
     "usd_rates": {},

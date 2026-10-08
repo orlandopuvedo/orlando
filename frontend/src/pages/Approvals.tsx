@@ -3,7 +3,11 @@ import { Link } from "react-router-dom";
 import { api, fmtDateTime } from "../api";
 import { Empty, Loading, Tabs, useAction, useApi } from "../components/ui";
 
-const KIND_ICON: Record<string, string> = { salary: "💰", legal: "⚖️", demographic: "🧾", video: "🎬", uncertain: "❓", final_submit: "🚀", blocked: "⛔" };
+const KIND_ICON: Record<string, string> = { salary: "💰", legal: "⚖️", demographic: "🧾", video: "🎬", uncertain: "❓", final_submit: "🚀", blocked: "⛔",
+  missing_profile: "👤", video_file: "📼", manual_action: "✋", verify_submission: "🔎" };
+const KIND_LABEL: Record<string, string> = { salary: "Salary answer", legal: "Legal / consent", demographic: "Demographic question", video: "Video",
+  uncertain: "Uncertain answer", final_submit: "Final submission", blocked: "Agent blocked", missing_profile: "Missing profile info",
+  video_file: "Unsupported video upload", manual_action: "Manual action needed", verify_submission: "Verify submission" };
 
 export function ApprovalCard({ ap, onDone }: { ap: any; onDone: () => void }) {
   const [editing, setEditing] = useState(false);
@@ -14,7 +18,7 @@ export function ApprovalCard({ ap, onDone }: { ap: any; onDone: () => void }) {
   return (
     <div className="card tight">
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <b>{KIND_ICON[ap.kind] || "•"} {ap.title}</b>
+        <b>{KIND_ICON[ap.kind] || "•"} {ap.title} <span className="badge">{KIND_LABEL[ap.kind] || ap.kind}</span></b>
         <span className="small muted">{fmtDateTime(ap.created_at)}</span>
       </div>
       {ap.message && <div className="secondary" style={{ margin: "6px 0" }}>{ap.message}</div>}
@@ -24,7 +28,14 @@ export function ApprovalCard({ ap, onDone }: { ap: any; onDone: () => void }) {
       ) : ap.proposed_value ? (
         <div className="infobox" style={{ marginTop: 8 }}><span className="small muted">Proposed answer:</span><div>{ap.proposed_value}</div></div>
       ) : null)}
-      {ap.status === "PENDING" ? (
+      {ap.status === "PENDING" && ap.options?.length > 0 ? (
+        <div className="row" style={{ marginTop: 8 }}>
+          {ap.options.map((o: string) => (
+            <button key={o} className={o === ap.proposed_value ? "good" : ""} onClick={() => resolve("edit", o)}>{o}{o === ap.proposed_value ? " (suggested)" : ""}</button>
+          ))}
+          {ap.kind !== "verify_submission" && <button onClick={() => resolve("skip")}>SKIP</button>}
+        </div>
+      ) : ap.status === "PENDING" ? (
         <div className="row" style={{ marginTop: 8 }}>
           {isBlock ? (
             <button className="good" onClick={() => resolve("approve")}>I handled it</button>

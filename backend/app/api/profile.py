@@ -41,7 +41,8 @@ def update_profile(data: dict[str, Any], db: Session = DB):
 
     if any(k in data for k in ("skills", "work_experience", "min_salary", "target_salary", "preferred_roles", "languages",
                                "work_arrangements", "education", "certifications", "excluded_industries", "employment_types",
-                               "preferred_categories", "target_salary_max", "salary_period", "tools", "country", "location")):
+                               "preferred_categories", "target_salary_max", "salary_period", "tools", "country", "location",
+                               "max_salary", "salary_currency", "preferred_industries", "work_authorization")):
         rescore_all(db)
     return profile_out(p)
 

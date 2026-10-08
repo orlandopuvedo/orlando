@@ -36,6 +36,7 @@ make start            # compila el frontend y abre http://127.0.0.1:8000
 - [Using the app](#using-the-app)
 - [Job sources & adding a new source](#job-sources)
 - [Adding a new AI provider](#adding-a-new-ai-provider)
+- [Job hunt configuration & discovery](#job-hunt-configuration--discovery)
 - [Browser agent configuration](#browser-agent-configuration)
 - [Video library & Loom integration](#video-library)
 - [Security](#security)
@@ -78,7 +79,7 @@ backend/                      FastAPI + SQLAlchemy 2 + Alembic (SQLite → Postg
     sources/                  JobSourceAdapter interface + adapters + registry (automation_status per source)
     browser/                  BrowserAgent abstraction, HTML detectors, Playwright agent, supervised runner
   migrations/                 Alembic migrations
-  tests/                      pytest suite (76 tests)
+  tests/                      pytest suite (134 tests, incl. real-Chromium integration tests on local fixtures)
 frontend/                     React 18 + TypeScript + Vite (dark UI, no UI framework)
   src/pages/                  Dashboard, Jobs, JobDetail, ApplyQueue, Applications (Kanban), ApplicationDetail,
                               Approvals, Contacts (Kanban + profile views), ContactDetail (timeline), Interviews,
@@ -176,7 +177,7 @@ APP_USERNAME=me APP_PASSWORD=strong-pass \
 ## Testing
 
 ```bash
-make test        # backend: 76 pytest tests
+make test        # backend: 134 pytest tests (2 drive real headless Chromium; auto-skipped without Playwright)
 make typecheck   # frontend: TypeScript strict
 ```
 Coverage by area: profile, resume parsing (TXT/DOCX, import confirmation), job normalization, salary parsing, duplicate detection, job scoring (strong match, deal-breakers, custom weights), apply queue, application package generation, fabrication guard, approvals, video detection (phrases, false positives, submission type) and recommendation, contacts, contact activities and timeline progression, profile views, interview tracking and completion, follow-up lifecycle and recommendations, analytics and recommendations, dashboard funnel, notifications, settings, status transitions, source adapters (with recorded payloads), job-hunt cycle, URL import rules, browser detectors and the supervised agent (CAPTCHA/login/2FA stops, approvals, final submit), and the AI provider fallback.
@@ -245,9 +246,36 @@ class JobSourceAdapter(ABC):
 2. Add it to `build_provider()` and `PROVIDERS` in `backend/app/ai/registry.py`, reading its key from `config.Settings` (env).
 3. That's it: all generators call the provider through the interface and fall back to templates if it fails.
 
+## Job hunt configuration & discovery
+
+**Settings → Job Hunt** holds the search profile: preferred roles (used as search queries), minimum / target / maximum
+salary (or *no limit*), salary period (hourly / monthly / annual) and currency, the policy for unpublished salaries
+(*allow* / *review* / *reject*), work arrangement, your location and accepted locations/regions, employment types,
+seniority, minimum match and queue scores, excluded companies, excluded job types, required keywords (all must
+appear), optional keywords and preferred industries. **No salary is hardcoded anywhere**: until you set it, nothing is assumed.
+
+Pipeline: **discover → normalize → dedupe → hard filters → score → prioritize → queue → package**. Hard filters
+(`services/filters.py`) run before qualification. A job that fails any of them (for example, $45k when your minimum is
+$80k/year) is stored and shown as *filtered out* with the reason, but **never queued, whatever its score**. Salaries are
+compared after converting both sides to monthly USD with the salary service.
+
+Discovery runs from the **▶ Run job hunt** button or the scheduler, with no "Add Job" needed. Enable at least one source
+with status `allowed` (Settings → Sources & searches; use **Test** to check it live). Every run ends with an explicit
+outcome and summary: *no sources enabled*, *all sources failed*, *checked recently (source rate limits)*, *no results*,
+*only duplicates*, *no matching jobs*, or *ok*. The summary lists sources checked, jobs discovered, rejected by filters,
+duplicates, qualified, queued, packages and per-source errors. A failing source never stops the others; its error is
+stored as source health. Responses that don't match the documented format raise a *schema* error instead of quietly
+returning 0 jobs.
+
+**Scheduler:** enable it in Settings → Automation, with times plus an IANA timezone. It shows the next run, last run,
+running state and errors. **It only runs while the backend process is running.** If runs were missed while the server was
+off, at most **one** catch-up run happens (for the latest missed slot within 24 h).
+
 ## Browser agent configuration
 
-Modes: **Copilot** (default: AI prepares, you submit), **Supervised** (agent fills forms, asks before anything sensitive and before submitting) and **Auto** (only where a source's apply automation is `allowed` *and* you enabled it. None of the built-in boards qualify).
+Modes: **Supervised** (default: the agent fills forms, asks you about anything missing or uncertain, and **never submits
+without your final approval**), **Copilot** (AI prepares, you submit) and **Auto** (only where a source's apply automation
+is `allowed` *and* you enabled it explicitly; none of the built-in boards qualify).
 
 ```bash
 make install-browser            # pip install playwright + browser
@@ -255,14 +283,44 @@ make install-browser            # pip install playwright + browser
 BROWSER_HEADLESS=false           # visible window: you log in / solve challenges yourself
 BROWSER_USER_DATA_DIR=./backend/data/browser-profile
 ```
-Use it from an application page: set the mode to *Supervised*, then **Run supervised agent**. The agent (`backend/app/browser/`):
-- refuses domains that prohibit automation (LinkedIn, Indeed, …) and sources with `manual_only`/`unknown` apply status;
-- opens the apply URL, inspects the page, and **stops** on CAPTCHA, login or 2FA. It creates a "blocked" approval and notification, and you take over;
-- fills only safe profile fields (name, email, phone, LinkedIn, portfolio, location), uploads the tailored resume, and uses approved answers;
-- sends salary, legal, demographic, video and uncertain fields to the Approval queue;
-- clicks submit **only** after you approve "Application is ready to submit" and re-run it.
+Open an application and click **Run supervised agent**. Each run is restartable: answers you approve are kept and
+reused, and you are not asked the same question again unless the form changed. The agent (`backend/app/browser/`):
+- picks an **ATS strategy** (`ats.py`): Greenhouse, Lever and Ashby have explicit handling (application URL, progression
+  and submit buttons, resume input, confirmation detection). Generic company forms use conservative defaults. Workday,
+  iCIMS, Taleo, SmartRecruiters, Workable and similar stop for manual handling. LinkedIn, Indeed and manual-only sources
+  are never automated;
+- inspects the page **and supported iframes** (same-origin or a known ATS host, e.g. an embedded Greenhouse form).
+  Inaccessible or unsupported frames stop the run with a clear reason;
+- **stops** on CAPTCHA challenges, login and 2FA/OTP (never solved or bypassed). Invisible reCAPTCHA scripts, which the
+  browser handles itself, are not treated as challenges;
+- fills only safe fields: profile data (name, email, phone, LinkedIn, website, location, country), the package resume
+  (tailored DOCX, otherwise the uploaded original), cover letter only where clearly requested, approved answers, and
+  the **approved** video URL (never invented; video *file* uploads are not supported → manual action);
+- creates an actionable approval for every required unknown:
+  - required **checkbox**: consent and legal terms always need your explicit "Check this box";
+  - required **radio group**: one approval listing the options;
+  - required field missing from your profile;
+  - required video file input;
+  - ambiguous dropdowns;
+  - salary, legal and demographic questions.
 
-`BrowserAgent` methods: `open_page, navigate, inspect_page, extract_text, click, type, select, upload_file, detect_captcha, detect_login, detect_2fa, detect_video_requirement, detect_file_upload, request_human_approval, submit`. No anti-bot bypassing is implemented, and none should be.
+  Dropdowns are matched exact → normalized → known equivalents → token set → unique containment. If more than one
+  option could match, or none does, you are asked instead;
+- walks **multi-step forms** by clicking only buttons it confidently identifies as Next/Continue. It never clicks
+  Back, Cancel, Sign in, Upload and similar. It detects loops (form not advancing) and stops at a configurable step limit;
+- requires the **"Application is ready to submit" approval**. One approval allows one submission attempt;
+- after submitting, **verifies confirmation** (known ATS success URL or text, generic thank-you or "application
+  received" message, confirmation ID):
+  - confirmed → **APPLIED**, with submission metadata (time, confirmation text and ID, final URL, ATS, resume, video,
+    answers) and an automatic follow-up;
+  - not confirmed → **SUBMITTED_UNCONFIRMED** plus a *Verify submission* approval. It is never counted as applied, and
+    the agent will not submit again until you verify;
+- writes an **execution log** per run (`AgentRun`): steps, fields filled, approvals, blockers, submission attempt,
+  confirmation and errors. It is shown on the application page.
+
+`BrowserAgent` methods: `open_page, navigate, inspect_page, extract_text, click, type, select, check, upload_file,
+list_frames, frame_html, act, wait_for_settle, detect_captcha, detect_login, detect_2fa, detect_video_requirement,
+detect_file_upload, request_human_approval, submit`. No anti-bot bypassing is implemented, and none should be.
 
 <a id="video-library"></a>
 ## Video library & Loom integration
@@ -286,10 +344,11 @@ Use it from an application page: set the mode to *Supervised*, then **Run superv
 ## Known limitations
 
 - **Job boards without permitted APIs** (LinkedIn, Indeed, Wellfound, FlexJobs, …) are manual import only, by design.
-- Public APIs change. The adapters are tested against recorded payloads, but the live endpoints could not be called from the build environment, so verify them on first use (errors are shown per source in Settings → Sources).
+- **Live job-board APIs are unverified.** The build environment's network policy blocked every job board, so the adapters are tested against sample payloads written from the documented formats. Use **Settings → Sources → Test** on first use; field-name variants are tolerated, and format changes surface as source *schema* errors.
+- **The browser agent was verified with real headless Chromium only on local HTML fixtures modeled on Greenhouse/Lever/Ashby markup, not on live ATS sites.** Expect site-specific issues (custom React widgets, unusual multi-step flows) on the first real applications; the agent stops and asks rather than guessing.
 - Heuristic resume parsing (no AI key) handles common layouts. Unusual layouts or scanned PDFs (no text layer) need manual entry or an AI provider. Import always asks you to confirm.
 - The fabrication guard is conservative and lexical: it flags unverified numbers, proper nouns and claim words, but cannot prove semantic truth. Always read before sending.
-- The supervised agent handles single-page forms. Multi-step wizards may need several runs or manual completion. Custom widgets (React selects, iframes) may not be fillable.
+- The agent fills native inputs, selects, radios, checkboxes and file inputs. Custom JavaScript widgets (React-select comboboxes, date pickers, drag-and-drop uploaders) and cross-origin forms from unknown vendors are not filled: the run stops with a reason.
 - Currency conversion uses static rates (override them with the `usd_rates` setting via `PUT /api/settings`).
 - Single-user app. One uvicorn worker if you use the in-process scheduler.
 - Profile views can only be recorded manually unless an official integration exposes them. The app never guesses viewers.

@@ -5,7 +5,7 @@ import { CopyButton, Field, Loading, Modal, Warnings, useAction, useApi } from "
 import { ApprovalCard } from "./Approvals";
 
 const NEXT: Record<string, string[]> = {
-  READY: ["APPLYING", "SKIPPED"], APPLYING: ["READY", "SKIPPED"], APPLIED: ["FOLLOW_UP", "INTERVIEW", "OFFER", "REJECTED", "WITHDRAWN"],
+  READY: ["APPLYING", "SKIPPED"], APPLYING: ["READY", "SKIPPED"], SUBMITTED_UNCONFIRMED: ["APPLIED", "READY"], APPLIED: ["FOLLOW_UP", "INTERVIEW", "OFFER", "REJECTED", "WITHDRAWN"],
   FOLLOW_UP: ["INTERVIEW", "OFFER", "REJECTED", "WITHDRAWN"], INTERVIEW: ["OFFER", "REJECTED", "WITHDRAWN", "FOLLOW_UP"],
   OFFER: ["HIRED", "REJECTED", "WITHDRAWN"], SKIPPED: ["READY"],
 };
@@ -66,6 +66,7 @@ export default function ApplicationDetail() {
       </div>
 
       {pkg.warnings?.length > 0 && <Warnings items={pkg.warnings} />}
+      <SubmissionState a={a} pending={pending} />
       {pending.length > 0 && (
         <div className="card">
           <h2>✅ Needs your approval ({pending.length})</h2>
@@ -180,17 +181,20 @@ export default function ApplicationDetail() {
             </select>
             {a.mode !== "copilot" && (
               <div className="col" style={{ marginTop: 10 }}>
-                <button disabled={busy === "agent"} onClick={async () => {
+                {!a.agent_allowed && <div className="warnbox small">Agent not available: {a.agent_permission}</div>}
+                <button disabled={busy === "agent" || !a.agent_allowed} onClick={async () => {
                   setBusy("agent");
                   setAgentResult(await act(() => api.post(`/applications/${a.id}/agent-run`)));
                   setBusy("");
                   reload();
-                }}>{busy === "agent" ? "Agent running… (browser window)" : "▶ Run supervised agent"}</button>
-                <div className="small muted">Stops at CAPTCHA, login, 2FA, salary/legal/demographic questions and before final submission.</div>
-                {agentResult && <div className={agentResult.status === "submitted" ? "goodbox" : "infobox"}><b>{agentResult.status}</b>: {agentResult.message}</div>}
+                }}>{busy === "agent" ? "Agent running… (browser window)" : pkg.submit_approved ? "▶ Run agent — submit (approved)" : "▶ Run supervised agent"}</button>
+                <div className="small muted">Stops at CAPTCHA, login, 2FA and anything missing/uncertain (→ Approvals). Never submits without your final approval, and only marks APPLIED after a confirmation is detected.</div>
+                {agentResult && <div className={agentResult.status === "submitted" ? "goodbox" : agentResult.status === "submitted_unconfirmed" || agentResult.status === "blocked" || agentResult.status === "error" ? "warnbox" : "infobox"}><b>{agentResult.status}</b>: {agentResult.message}</div>}
               </div>
             )}
           </div>
+
+          <AgentRuns appId={a.id} key={a.last_agent_run?.id || 0} />
 
           <div className="card">
             <h2>Details</h2>
@@ -240,5 +244,75 @@ function MarkApplied({ app, onClose, onDone }: { app: any; onClose: () => void; 
         </div>
       </div>
     </Modal>
+  );
+}
+
+
+function SubmissionState({ a, pending }: { a: any; pending: any[] }) {
+  const finalPending = pending.find((p) => p.kind === "final_submit");
+  const verify = pending.find((p) => p.kind === "verify_submission");
+  const fieldsPending = pending.filter((p) => !["final_submit", "verify_submission"].includes(p.kind)).length;
+  const pkg = a.package || {};
+  if (a.submission_status === "confirmed" || a.submission_status === "manual_confirmed") {
+    return (
+      <div className="goodbox">
+        ✅ <b>Submitted & {a.submission_status === "confirmed" ? "confirmed by the ATS" : "verified by you"}</b> {a.submitted_at && `· ${fmtDateTime(a.submitted_at)}`} {a.ats && `· ${a.ats}`}
+        {a.confirmation_id && <> · confirmation <b>{a.confirmation_id}</b></>}
+        {a.confirmation_text && <div className="small secondary">“{a.confirmation_text}”</div>}
+        {a.final_url && <div className="small"><a href={a.final_url} target="_blank" rel="noreferrer">{a.final_url}</a></div>}
+      </div>
+    );
+  }
+  if (a.status === "SUBMITTED_UNCONFIRMED") {
+    return (
+      <div className="warnbox">
+        ⚠ <b>Submit was clicked, but no confirmation was detected</b> — this is <b>not</b> counted as applied.
+        Check your email / the ATS page and answer “Verify submission” below. {verify ? "" : <Link to="/approvals">Open Approvals</Link>}
+        {a.final_url && <div className="small">Last page: <a href={a.final_url} target="_blank" rel="noreferrer">{a.final_url}</a></div>}
+      </div>
+    );
+  }
+  if (fieldsPending || finalPending || pkg.submit_approved) {
+    return (
+      <div className="infobox">
+        {fieldsPending > 0 && <div>⏸ <b>{fieldsPending} answer(s) needed</b> before the agent can continue.</div>}
+        {finalPending && <div>🚀 <b>Final submission needs your approval.</b> Nothing is submitted until you approve it.</div>}
+        {pkg.submit_approved && <div>✅ Final submission approved — run the agent to submit (one approval = one submission attempt).</div>}
+      </div>
+    );
+  }
+  return null;
+}
+
+function AgentRuns({ appId }: { appId: number }) {
+  const { data } = useApi(() => api.get(`/applications/${appId}/agent-runs`), [appId]);
+  const [open, setOpen] = useState<number | null>(null);
+  if (!data || !data.length) return null;
+  return (
+    <div className="card">
+      <h2>🧾 Agent execution log</h2>
+      {data.map((r: any) => (
+        <div key={r.id} className="list-item">
+          <div className="row" style={{ justifyContent: "space-between", cursor: "pointer" }} onClick={() => setOpen(open === r.id ? null : r.id)}>
+            <span><span className={`badge ${r.status === "submitted" ? "good" : ["blocked", "error", "submitted_unconfirmed"].includes(r.status) ? "critical" : "warning"}`}>{r.status}</span>{" "}
+              <span className="small muted">{fmtDateTime(r.started_at)} · {r.ats} · step {r.current_step} · {r.fields_filled} filled · {r.approvals_requested} approvals{r.submission_attempted ? " · submit attempted" : ""}</span></span>
+            <span className="small muted">{open === r.id ? "▲" : "▼"}</span>
+          </div>
+          {r.blocked_reason && <div className="small" style={{ color: "var(--critical)" }}>{r.blocked_reason}</div>}
+          {r.error && <div className="small" style={{ color: "var(--critical)" }}>Error: {r.error}</div>}
+          {r.confirmation?.confirmed && <div className="small">Confirmation: {r.confirmation.signal} {r.confirmation.id && `· ${r.confirmation.id}`}</div>}
+          {open === r.id && (
+            <table style={{ marginTop: 6, tableLayout: "fixed", width: "100%" }}>
+              <tbody>
+                {(r.events || []).map((e: any, i: number) => (
+                  <tr key={i}><td className="small muted" style={{ whiteSpace: "nowrap" }}>{new Date(e.at).toLocaleTimeString()}</td><td className="small">#{e.step}</td>
+                    <td><span className="badge">{e.kind}</span></td><td className="small" style={{ wordBreak: "break-word", width: "60%" }}>{e.msg}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }

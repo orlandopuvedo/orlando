@@ -101,6 +101,11 @@ export default function JobDetail() {
         </div>
       </div>
 
+      {job.filter_status === "rejected" && (
+        <div className="warnbox"><b>Filtered out by your Job Hunt constraints</b> — this job is never queued automatically, whatever its score.
+          <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>{job.filter_reasons.filter((r: string) => !r.startsWith("Note:")).map((r: string, i: number) => <li key={i}>{r}</li>)}</ul></div>
+      )}
+      {job.filter_status === "review" && <div className="infobox"><b>Needs your review before queueing:</b> {job.filter_reasons.join(" ")}</div>}
       <div className="grid g-main">
         <div className="col" style={{ gap: 14 }}>
           <div className="grid g2">

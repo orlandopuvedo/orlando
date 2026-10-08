@@ -1,0 +1,32 @@
+<!doctype html><html><head><title>Job Application for Sales Development Representative at Acme</title>
+<script src="https://www.google.com/recaptcha/enterprise.js?render=explicit"></script></head>
+<body><div id="app_body"><h1 class="app-title">Sales Development Representative</h1><div class="company-name">at Acme</div>
+<div id="application"><form id="application_form" action="/acme/jobs/4000001" method="post" enctype="multipart/form-data">
+<div class="field"><label for="first_name">First Name<span class="asterisk">*</span></label>
+<input type="text" id="first_name" name="job_application[first_name]" aria-required="true"></div>
+<div class="field"><label for="last_name">Last Name<span class="asterisk">*</span></label>
+<input type="text" id="last_name" name="job_application[last_name]" aria-required="true"></div>
+<div class="field"><label for="email">Email<span class="asterisk">*</span></label>
+<input type="text" id="email" name="job_application[email]" aria-required="true"></div>
+<div class="field"><label for="phone">Phone</label><input type="text" id="phone" name="job_application[phone]"></div>
+<div class="field"><label for="resume">Resume/CV<span class="asterisk">*</span></label>
+<input type="file" id="resume" name="job_application[resume]" class="visually-hidden" style="display:none" aria-required="true"></div>
+<div class="field"><label for="cover_letter">Cover Letter</label><input type="file" id="cover_letter" name="job_application[cover_letter]"></div>
+<div class="field"><label for="q_linkedin">LinkedIn Profile</label><input type="text" id="q_linkedin" name="job_application[answers_attributes][0][text_value]"></div>
+<div class="field"><label for="q_auth">Are you legally authorized to work in Colombia?<span class="asterisk">*</span></label>
+<select id="q_auth" name="job_application[answers_attributes][1][boolean_value]" aria-required="true"><option value="">--</option><option value="1">Yes</option><option value="0">No</option></select></div>
+<div class="field"><label for="q_loom">Please share a Loom video link introducing yourself (max 5 minutes)<span class="asterisk">*</span></label>
+<input type="text" id="q_loom" name="job_application[answers_attributes][2][text_value]" aria-required="true"></div>
+<fieldset><legend>Are you comfortable working US Eastern Time hours?<span class="asterisk">*</span></legend>
+<label><input type="radio" name="job_application[answers_attributes][3][boolean_value]" value="1" aria-required="true"> Yes</label>
+<label><input type="radio" name="job_application[answers_attributes][3][boolean_value]" value="0"> No</label></fieldset>
+<div class="field"><label for="q_hear">How did you hear about this job?</label>
+<select id="q_hear" name="job_application[answers_attributes][4][text_value]"><option value="">Please select</option><option>LinkedIn</option><option>Referral</option><option>Job board</option></select></div>
+<div id="eeoc_fields"><div class="field"><label for="gender">Gender</label>
+<select id="gender" name="job_application[gender]"><option value="">Please select</option><option>Male</option><option>Female</option><option>Decline To Self Identify</option></select></div></div>
+<div class="field"><label><input type="checkbox" id="gdpr" name="job_application[data_compliance][gdpr_consent_given]" aria-required="true"> I agree to the Privacy Policy and consent to the processing of my data *</label></div>
+<div class="field"><label><input type="checkbox" id="news" name="job_application[newsletter]"> Send me future job openings</label></div>
+<div class="g-recaptcha" data-size="invisible" data-sitekey="6Lxxx"></div>
+<input type="hidden" name="job_application[mapped_url_token]" value="abc">
+<button id="submit_app" type="submit">Submit Application</button>
+</form></div></div></body></html>

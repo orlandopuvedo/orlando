@@ -4,7 +4,7 @@ import { api, fmtDate, money } from "../api";
 import { Kanban, Loading, ScoreBadge, Tabs, useAction, useApi } from "../components/ui";
 
 const TITLES: Record<string, string> = {
-  DISCOVERED: "Discovered", QUALIFIED: "Qualified", READY: "Ready", APPLYING: "Applying", APPLIED: "Applied",
+  DISCOVERED: "Discovered", QUALIFIED: "Qualified", READY: "Ready", APPLYING: "Applying", SUBMITTED_UNCONFIRMED: "Submitted (unconfirmed)", APPLIED: "Applied",
   FOLLOW_UP: "Follow-up", INTERVIEW: "Interview", OFFER: "Offer", REJECTED: "Rejected",
 };
 

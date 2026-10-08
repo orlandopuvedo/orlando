@@ -33,7 +33,7 @@ Spanish (Native), English (C1)
 def test_profile_crud(client):
     r = client.get("/api/profile")
     assert r.status_code == 200
-    assert r.json()["min_salary"] == 2000  # sensible default
+    assert r.json()["min_salary"] is None  # salary is never assumed — the user configures it
     r = client.put("/api/profile", json=SAMPLE_PROFILE)
     body = r.json()
     assert body["full_name"] == "Ana Rivera"
