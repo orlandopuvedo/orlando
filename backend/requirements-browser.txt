@@ -1,0 +1,2 @@
+# Optional: browser agent (Supervised / Auto modes)
+playwright>=1.45
