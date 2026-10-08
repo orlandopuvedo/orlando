@@ -262,7 +262,8 @@ def detect_video_requirement(*texts: str | None) -> VideoRequirement:
 
 # ---------------------------------------------------------------- other requirements
 def detect_requirements(*texts: str | None) -> dict:
-    blob = " \n".join(t or "" for t in texts).lower()
+    original = " \n".join(t or "" for t in texts)
+    blob = original.lower()
     req = {
         "cover_letter": bool(re.search(r"cover letter|letter of motivation|motivation letter|why you(?:'re| are) a (?:good|great) fit", blob)),
         "cover_letter_required": bool(re.search(r"(?:include|attach|submit|send|required?)[^.\n]{0,30}cover letter|cover letter[^.\n]{0,20}(?:is )?required", blob)),
@@ -274,7 +275,7 @@ def detect_requirements(*texts: str | None) -> dict:
         "availability_question": bool(re.search(r"start date|when can you start|notice period|availability", blob)),
         "file_upload": bool(re.search(r"upload|attach", blob)),
     }
-    req["screening_questions"] = extract_questions(blob)
+    req["screening_questions"] = extract_questions(original)
     return req
 
 
@@ -287,4 +288,9 @@ def extract_questions(text: str | None) -> list[str]:
         line = raw.strip(" •-*\t0123456789.)")
         if line.endswith("?") and 12 <= len(line) <= 300:
             qs.append(line[0].upper() + line[1:])
-    return list(dict.fromkeys(qs))[:15]
+    seen, out = set(), []
+    for q in qs:
+        if q.lower() not in seen:
+            seen.add(q.lower())
+            out.append(q)
+    return out[:15]

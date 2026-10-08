@@ -245,8 +245,8 @@ def score_language(job, profile) -> tuple[float, list[str], list[str]]:
         return (100 if "english" in mine or "inglés" in mine or "ingles" in mine else 70), [], []
     missing = [lang for lang in required if lang not in mine and not (lang == "english" and ("inglés" in mine or "ingles" in mine)) and not (lang == "spanish" and ("español" in mine or "espanol" in mine))]
     if not missing:
-        return 100, [f"Language requirement met ({', '.join(required)})."], []
-    return round(100 * (1 - len(missing) / len(required)) * 0.8), [], [f"Requires {', '.join(missing)}."]
+        return 100, [f"Language requirement met ({', '.join(x.capitalize() for x in required)})."], []
+    return round(100 * (1 - len(missing) / len(required)) * 0.8), [], [f"Requires {', '.join(x.capitalize() for x in missing)}."]
 
 
 def estimate_profile_seniority(years: float) -> str:

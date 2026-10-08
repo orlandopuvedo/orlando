@@ -193,7 +193,8 @@ def build_package(db: Session, job: Job, *, mode: str | None = None, regenerate:
             else:
                 g = gen.personalize_answer(q, lib.answer if lib else None, profile, job, provider)
                 text, by, w = g.text, g.generated_by, g.warnings
-            needs_approval = kind in {"salary", "legal", "demographic"} or not text or (lib is not None and lib.requires_approval)
+            is_standard = q in STANDARD_QUESTIONS
+            needs_approval = kind in {"salary", "legal", "demographic"} or (not text and not is_standard) or (lib is not None and lib.requires_approval)
             out.append({"question": q, "answer": text, "kind": kind, "answer_id": lib.id if lib else None,
                         "generated_by": by, "warnings": w, "needs_approval": needs_approval, "approved": False})
             if needs_approval:

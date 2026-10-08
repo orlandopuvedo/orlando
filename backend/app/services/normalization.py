@@ -112,7 +112,7 @@ def normalize_job(data: dict[str, Any], source: str = "manual", usd_rates: dict 
     video = det.detect_video_requirement(description, requirements, questions)
     reqs = det.detect_requirements(description, requirements, questions)
     if questions:
-        reqs["screening_questions"] = list(dict.fromkeys(det.extract_questions(questions) + reqs["screening_questions"]))[:15]
+        reqs["screening_questions"] = det.extract_questions("\n".join(det.extract_questions(questions) + reqs["screening_questions"]))
 
     src_url = data.get("source_url") or data.get("url")
     apply_url = data.get("apply_url") or src_url

@@ -21,3 +21,4 @@ frontend/dist/
 
 # Browser profile
 .browser-profile/
+frontend/tsconfig.tsbuildinfo

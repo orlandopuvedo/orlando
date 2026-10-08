@@ -117,3 +117,9 @@ def test_job_update_and_rescore(client):
     assert job["salary_monthly_usd_max"] is None
     upd = client.put(f"/api/jobs/{job['id']}", json={"description": "Remote SDR with HubSpot. Salary $3,000 - $4,000 per month."}).json()
     assert upd["salary_monthly_usd_max"] == 4000
+
+
+def test_screening_questions_keep_case_and_dedupe():
+    nj = normalize_job({"title": "SDR", "description": "Why do you want to work at Gamma?",
+                        "application_questions": "Why do you want to work at Gamma?\nWhat are your salary expectations?"})
+    assert nj.detected_requirements["screening_questions"] == ["Why do you want to work at Gamma?", "What are your salary expectations?"]

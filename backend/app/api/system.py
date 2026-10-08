@@ -97,8 +97,8 @@ def update_source(key: str, data: dict[str, Any], db: Session = DB):
     src = db.scalar(select(JobSource).where(JobSource.key == key))
     if not src:
         raise HTTPException(404, "Unknown source")
-    if data.get("enabled") and src.automation_status not in ("allowed", "review_required"):
-        raise HTTPException(409, f"{src.name} is {src.automation_status}: automated search is not permitted. Use manual import.")
+    if data.get("enabled") and src.automation_status != "allowed":
+        raise HTTPException(409, f"{src.name} is {src.automation_status}: automated search is not enabled. Use manual import.")
     apply_updates(src, data, {"enabled", "config"})
     db.commit()
     return to_dict(src)
